@@ -1,0 +1,6 @@
+{
+  "name": "Dual-Layer Crypto Trading Bot",
+  "description": "Python 3 Dual-Layer Crypto Trading Bot with Context Graph Engineering & Live Binance Paper Trading",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
