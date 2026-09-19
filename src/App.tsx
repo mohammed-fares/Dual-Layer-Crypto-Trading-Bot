@@ -222,19 +222,24 @@ export default function App() {
         const move1m = asset?.change1m || 0;
         const inCooldown = (cooldowns[f.symbol] || 0) > Date.now();
         const alreadyOpen = positions.some((p) => p.symbol === f.symbol);
-        return move1m < 0.3 && !inCooldown && !alreadyOpen;
+        return move1m < 0.45 && move1m > -1.2 && !inCooldown && !alreadyOpen && f.correlation >= 0.65;
       });
 
       if (eligible.length === 0) {
         addLog(
           'INFO',
-          `[SNIPER SCAN] No eligible lagging followers available for ${leaderSymbol} (all moved or in 15m cooldown).`
+          `[SNIPER SCAN] No eligible lagging followers available for ${leaderSymbol} (all moved, cooling, or active).`
         );
         setTimeout(() => setActiveSurgeLeader(null), 3500);
         return;
       }
 
-      // Pick top correlated lagging follower
+      // Pick top correlated lagging follower with highest lag gap
+      eligible.sort((a, b) => {
+        const gapA = (leaderSurge - (assets[a.symbol]?.change1m || 0)) * a.correlation;
+        const gapB = (leaderSurge - (assets[b.symbol]?.change1m || 0)) * b.correlation;
+        return gapB - gapA;
+      });
       const target = eligible[0];
       const targetAsset = assets[target.symbol];
       if (!targetAsset) return;
@@ -250,8 +255,8 @@ export default function App() {
 
       setWalletBalance((prev) => prev - sizeUsd);
       const coinsAmount = sizeUsd / currentPrice;
-      const tp = currentPrice * 1.025; // +2.5%
-      const sl = currentPrice * 0.988; // -1.2%
+      const tp = currentPrice * 1.016; // Scalp TP: +1.6%
+      const sl = currentPrice * 0.990; // Risk SL: -1.0%
 
       const newPos: Position = {
         id: Math.random().toString(36).substring(2, 9),
@@ -276,7 +281,7 @@ export default function App() {
           currentPrice < 1 ? 5 : 2
         )} | Size: ${sizeUsd.toFixed(2)} USDT | Trigger: ${leaderSymbol} (r=${target.correlation.toFixed(
           2
-        )}) | TP: $${tp.toFixed(tp < 1 ? 5 : 2)} (+2.5%) | SL: $${sl.toFixed(sl < 1 ? 5 : 2)} (-1.2%)`
+        )}) | TP: $${tp.toFixed(tp < 1 ? 5 : 2)} (+1.6%) | SL: $${sl.toFixed(sl < 1 ? 5 : 2)} (-1.0%) | Breakeven @ +0.7%`
       );
 
       setTimeout(() => setActiveSurgeLeader(null), 5000);
