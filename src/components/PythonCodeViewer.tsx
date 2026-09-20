@@ -38,11 +38,21 @@ mkdir -p ~/binance_dual_bot && cd ~/binance_dual_bot
 python3 -m venv venv
 source venv/bin/activate
 
-# 4. Install required analytical and async packages
-pip install websockets pandas numpy aiohttp
+# 4. Install required analytical and quantitative testing packages
+pip install websockets pandas numpy scipy aiohttp pytest
 
-# 5. Place crypto_dual_layer_bot.py in the folder and execute:
-python3 crypto_dual_layer_bot.py`;
+# 5. Run unit & regression test suite (optional):
+# pytest test_bot.py
+
+# 6. Execute bot with automated hourly trading reports:
+# (Saves structured JSON and readable TXT reports every 3600s in trading_reports/)
+python3 crypto_dual_layer_bot.py
+
+# Custom hourly report interval (e.g. every 30 minutes / 1800 seconds):
+# python3 crypto_dual_layer_bot.py --report-interval 1800 --reports-dir my_reports
+
+# Or run 60-min quantitative simulation & baselines benchmark:
+# python3 crypto_dual_layer_bot.py --backtest --duration 60`;
 
   const handleCopyBash = async () => {
     try {

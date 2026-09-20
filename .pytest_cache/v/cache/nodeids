@@ -1,0 +1,12 @@
+[
+  "test_bot.py::test_backtest_simulation",
+  "test_bot.py::test_context_graph_safe_diagonal",
+  "test_bot.py::test_data_health_monitor",
+  "test_bot.py::test_lead_lag_cross_correlation",
+  "test_bot.py::test_paper_trading_execution_and_fees",
+  "test_bot.py::test_portfolio_summary_keys",
+  "test_bot.py::test_risk_engine_constraints",
+  "test_bot.py::test_strategy_config",
+  "test_bot.py::test_timestamped_market_buffer",
+  "test_bot.py::test_warmup_fallback_no_peers_error"
+]

@@ -65,3 +65,36 @@ export interface TerminalLog {
   type: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR' | 'SNIPER' | 'BRAIN' | 'TRADE';
   message: string;
 }
+
+export interface HourlyTradingReport {
+  id: string;
+  reportNumber: number;
+  timestamp: number;
+  timeFormatted: string;
+  periodStartFormatted: string;
+  periodEndFormatted: string;
+  initialBalance: number;
+  cashBalance: number;
+  totalEquity: number;
+  peakEquity: number;
+  drawdownPct: number;
+  maxDrawdownPct: number;
+  totalPnlUsd: number;
+  totalPnlPct: number;
+  hourPnlUsd: number;
+  hourPnlPct: number;
+  hourTradesCount: number;
+  hourWinningTrades: number;
+  hourLosingTrades: number;
+  hourWinRatePct: number;
+  cumulativeTradesCount: number;
+  cumulativeWinRatePct: number;
+  openPositionsCount: number;
+  marketRegime: string;
+  marketBreadth: number;
+  activeLeaders: string[];
+  openPositionsSnapshot: Position[];
+  closedTradesThisHour: ClosedTrade[];
+  isSessionFinal?: boolean;
+}
+
