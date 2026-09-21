@@ -163,10 +163,10 @@ class StrategyConfig:
     TRAILING_STOP_DISTANCE_PCT: float = 0.40
     TIME_EXPIRY_SECONDS: float = 1500.0
 
-    # Cooldown Rules
-    COOLDOWN_LOSS_SECONDS: float = 600.0
-    COOLDOWN_PROFIT_SECONDS: float = 300.0
-    LEADER_DEBOUNCE_SECONDS: float = 20.0
+    # Cooldown Rules (15-Minute Anti-Duplicate Trading Window)
+    COOLDOWN_LOSS_SECONDS: float = 900.0      # 15 minutes cooldown after loss
+    COOLDOWN_PROFIT_SECONDS: float = 900.0    # 15 minutes cooldown after profit
+    LEADER_DEBOUNCE_SECONDS: float = 180.0    # 180 seconds leader surge deduplication window
 
     # Signal & Momentum Thresholds
     MIN_LEADER_RETURN_20S: float = 0.90

@@ -316,7 +316,51 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [walletBalance, positions, closedTrades, hourlyReports, cooldowns, tradingMode]);
 
-  // Evaluate TP & SL on active positions
+  // Strict Anti-Duplicate Locks & Concurrency Guards (Prevent duplicate trade execution & race conditions)
+  const MAX_CONCURRENT_POSITIONS = 3;
+  const inFlightOrdersRef = useRef<Set<string>>(new Set());
+  const inFlightExitsRef = useRef<Set<string>>(new Set());
+  const activePositionSymbolsRef = useRef<Set<string>>(new Set(positions.map((p) => p.symbol)));
+  const leaderSurgeLockRef = useRef<Record<string, number>>({});
+  const lastGlobalTradeTimeRef = useRef<number>(0);
+
+  // Sync active positions set with React state
+  useEffect(() => {
+    activePositionSymbolsRef.current = new Set(positions.map((p) => p.symbol));
+  }, [positions]);
+
+  // Refs for stabilizing high-frequency event loops and preventing stale closures
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
+
+  const cooldownsRef = useRef(cooldowns);
+  cooldownsRef.current = cooldowns;
+
+  const followersMapRef = useRef(followersMap);
+  followersMapRef.current = followersMap;
+
+  const positionsRef = useRef(positions);
+  positionsRef.current = positions;
+
+  const walletBalanceRef = useRef(walletBalance);
+  walletBalanceRef.current = walletBalance;
+
+  const closedTradesRef = useRef(closedTrades);
+  closedTradesRef.current = closedTrades;
+
+  const tradingModeRef = useRef(tradingMode);
+  tradingModeRef.current = tradingMode;
+
+  const liveTradingConfigRef = useRef(liveTradingConfig);
+  liveTradingConfigRef.current = liveTradingConfig;
+
+  const correlationModeRef = useRef(correlationMode);
+  correlationModeRef.current = correlationMode;
+
+  const hasLoggedInitialRest = useRef(false);
+  const hasLoggedWsConstrained = useRef(false);
+
+  // Evaluate TP & SL on active positions with Anti-Duplicate Exit Protection
   const evaluatePositions = useCallback(
     (currentPrices: Record<string, number>) => {
       setPositions((prevPositions) => {
@@ -327,9 +371,16 @@ export default function App() {
           const currentPrice = currentPrices[pos.symbol] || pos.currentPrice;
           const updatedPos = { ...pos, currentPrice };
 
+          // Skip if exit is already in-flight for this position
+          if (inFlightExitsRef.current.has(pos.id)) {
+            return;
+          }
+
           if (currentPrice >= pos.takeProfitPrice) {
+            inFlightExitsRef.current.add(pos.id);
             toClose.push({ pos: updatedPos, exitPrice: currentPrice, reason: 'TAKE_PROFIT' });
           } else if (currentPrice <= pos.stopLossPrice) {
+            inFlightExitsRef.current.add(pos.id);
             toClose.push({ pos: updatedPos, exitPrice: currentPrice, reason: 'STOP_LOSS' });
           } else {
             remaining.push(updatedPos);
@@ -338,10 +389,19 @@ export default function App() {
 
         if (toClose.length > 0) {
           toClose.forEach(({ pos, exitPrice, reason }) => {
+            // Immediately release symbol from active set & in-flight set
+            activePositionSymbolsRef.current.delete(pos.symbol);
+            inFlightOrdersRef.current.delete(pos.symbol);
+
             const exitVal = pos.coinsAmount * exitPrice;
             const pnlUsd = exitVal - pos.sizeUsd;
             const returnPct = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
             const now = Date.now();
+
+            // Enforce 15-minute cooldown (15 * 60 * 1000 ms)
+            const cdUntil = now + 15 * 60 * 1000;
+            cooldownsRef.current[pos.symbol] = cdUntil;
+            setCooldowns((prevCd) => ({ ...prevCd, [pos.symbol]: cdUntil }));
 
             // Real Binance Spot Order Execution on Exit when in LIVE mode
             if (tradingModeRef.current === 'LIVE' && liveTradingConfigRef.current.apiKey) {
@@ -377,6 +437,7 @@ export default function App() {
                 });
             }
 
+            walletBalanceRef.current += exitVal;
             setWalletBalance((prevBal) => {
               const newBal = prevBal + exitVal;
 
@@ -395,9 +456,6 @@ export default function App() {
               };
 
               setClosedTrades((prevTrades) => [...prevTrades, closedRecord]);
-
-              // Set 15-minute cooldown (15 * 60 * 1000 ms)
-              setCooldowns((prevCd) => ({ ...prevCd, [pos.symbol]: now + 15 * 60 * 1000 }));
 
               // Log matching terminal output
               addLog(
@@ -419,37 +477,6 @@ export default function App() {
     },
     [addLog]
   );
-
-  // Refs for stabilizing high-frequency event loops and preventing effect restarts
-  const assetsRef = useRef(assets);
-  assetsRef.current = assets;
-
-  const cooldownsRef = useRef(cooldowns);
-  cooldownsRef.current = cooldowns;
-
-  const followersMapRef = useRef(followersMap);
-  followersMapRef.current = followersMap;
-
-  const positionsRef = useRef(positions);
-  positionsRef.current = positions;
-
-  const walletBalanceRef = useRef(walletBalance);
-  walletBalanceRef.current = walletBalance;
-
-  const closedTradesRef = useRef(closedTrades);
-  closedTradesRef.current = closedTrades;
-
-  const tradingModeRef = useRef(tradingMode);
-  tradingModeRef.current = tradingMode;
-
-  const liveTradingConfigRef = useRef(liveTradingConfig);
-  liveTradingConfigRef.current = liveTradingConfig;
-
-  const correlationModeRef = useRef(correlationMode);
-  correlationModeRef.current = correlationMode;
-
-  const hasLoggedInitialRest = useRef(false);
-  const hasLoggedWsConstrained = useRef(false);
 
   // Mode and Correlation Handlers
   const handleToggleCorrelationMode = (mode: 'fixed' | 'adaptive') => {
@@ -517,9 +544,30 @@ export default function App() {
     addLog('WARN', '🚨 [KILL SWITCH ENGAGED] Emergency stop activated! Switched immediately to Paper Trading.');
   };
 
-  // Trigger Sniper Trade on Lagging Follower
+  // Trigger Sniper Trade on Lagging Follower with Complete Anti-Duplicate Locks & Quantitative Validation
   const triggerSniperTrade = useCallback(
     (leaderSymbol: string, leaderSurge: number) => {
+      const now = Date.now();
+
+      // 1. Leader Surge Deduplication Lock: 180-second window to prevent duplicate firing on the same surge event
+      const lastLeaderSurge = leaderSurgeLockRef.current[leaderSymbol] || 0;
+      if (now - lastLeaderSurge < 180000) {
+        return;
+      }
+
+      // 2. Global Trade Throttle: Minimum 10 seconds between opening any new positions
+      if (now - lastGlobalTradeTimeRef.current < 10000) {
+        return;
+      }
+
+      // 3. Max Concurrent Positions Limit: Maximum 3 active concurrent trades
+      if (activePositionSymbolsRef.current.size >= MAX_CONCURRENT_POSITIONS) {
+        return;
+      }
+
+      // Lock leader surge immediately to prevent race conditions from concurrent ticks
+      leaderSurgeLockRef.current[leaderSymbol] = now;
+
       setActiveSurgeLeader(leaderSymbol);
       addLog(
         'SNIPER',
@@ -532,16 +580,21 @@ export default function App() {
       const currentFollowersMap = followersMapRef.current;
       const currentAssets = assetsRef.current;
       const currentCooldowns = cooldownsRef.current;
-      const currentPositions = positionsRef.current;
       const currentBalance = walletBalanceRef.current;
 
       const followers = currentFollowersMap[leaderSymbol] || [];
       const eligible = followers.filter((f) => {
-        const asset = currentAssets[f.symbol];
-        const move1m = asset?.change1m || 0;
-        const inCooldown = (currentCooldowns[f.symbol] || 0) > Date.now();
-        const alreadyOpen = currentPositions.some((p) => p.symbol === f.symbol);
-        return move1m < 0.45 && move1m > -1.2 && !inCooldown && !alreadyOpen && f.correlation >= 0.65;
+        const sym = f.symbol;
+        const asset = currentAssets[sym];
+        if (!asset || asset.price <= 0) return false;
+
+        const move1m = asset.change1m || 0;
+        const inCooldown = (currentCooldowns[sym] || 0) > now;
+        const alreadyOpen = activePositionSymbolsRef.current.has(sym);
+        const inFlight = inFlightOrdersRef.current.has(sym);
+
+        // Strict Lead-Lag conditions: follower lagging, not cooling, not open, high correlation
+        return move1m < 0.45 && move1m > -1.2 && !inCooldown && !alreadyOpen && !inFlight && f.correlation >= 0.65;
       });
 
       if (eligible.length === 0) {
@@ -559,32 +612,49 @@ export default function App() {
         const gapB = (leaderSurge - (currentAssets[b.symbol]?.change1m || 0)) * b.correlation;
         return gapB - gapA;
       });
+
       const target = eligible[0];
-      const targetAsset = currentAssets[target.symbol];
-      if (!targetAsset) return;
+      const targetSymbol = target.symbol;
+      const targetAsset = currentAssets[targetSymbol];
+      if (!targetAsset || targetAsset.price <= 0) return;
+
+      // Double-check synchronous atomic locks before acquiring
+      if (inFlightOrdersRef.current.has(targetSymbol) || activePositionSymbolsRef.current.has(targetSymbol)) {
+        return;
+      }
+
+      // Synchronously acquire atomic execution locks
+      inFlightOrdersRef.current.add(targetSymbol);
+      activePositionSymbolsRef.current.add(targetSymbol);
+      lastGlobalTradeTimeRef.current = now;
 
       const currentPrice = targetAsset.price;
-      const sizeUsd = Math.min(500.0, currentBalance * 0.05);
+      const sizeUsd = Math.min(500.0, Math.max(50.0, currentBalance * 0.05));
 
       if (currentBalance < sizeUsd) {
-        addLog('WARN', `[SNIPER] Insufficient virtual balance to execute trade on ${target.symbol}.`);
+        inFlightOrdersRef.current.delete(targetSymbol);
+        activePositionSymbolsRef.current.delete(targetSymbol);
+        addLog('WARN', `[SNIPER] Insufficient virtual balance to execute trade on ${targetSymbol}.`);
         setTimeout(() => setActiveSurgeLeader(null), 3500);
         return;
       }
 
+      // Synchronously update local balance
+      walletBalanceRef.current -= sizeUsd;
       setWalletBalance((prev) => prev - sizeUsd);
+
       const coinsAmount = sizeUsd / currentPrice;
       const tp = currentPrice * 1.016; // Scalp TP: +1.6%
       const sl = currentPrice * 0.990; // Risk SL: -1.0%
 
       const newPos: Position = {
         id: Math.random().toString(36).substring(2, 9),
-        symbol: target.symbol,
+        symbol: targetSymbol,
         entryPrice: currentPrice,
         currentPrice,
         sizeUsd,
         coinsAmount,
-        entryTime: Date.now(),
+        entryTime: now,
         takeProfitPrice: tp,
         stopLossPrice: sl,
         triggerLeader: leaderSymbol,
@@ -593,22 +663,38 @@ export default function App() {
         unrealizedPnlPct: 0,
       };
 
-      setPositions((prev) => [...prev, newPos]);
+      // Synchronously update positions ref and React state
+      positionsRef.current = [...positionsRef.current, newPos];
+      setPositions((prev) => {
+        if (prev.some((p) => p.symbol === targetSymbol)) return prev;
+        return [...prev, newPos];
+      });
+
+      // Enforce immediate 15-minute cooldown on entry as well
+      const cdUntil = now + 15 * 60 * 1000;
+      cooldownsRef.current[targetSymbol] = cdUntil;
+      setCooldowns((prev) => ({ ...prev, [targetSymbol]: cdUntil }));
+
       addLog(
         'SNIPER',
-        `🎯 [SNIPER ORDER EXECUTED] Bought ${target.symbol} @ $${currentPrice.toFixed(
+        `🎯 [SNIPER ORDER EXECUTED] Bought ${targetSymbol} @ $${currentPrice.toFixed(
           currentPrice < 1 ? 5 : 2
         )} | Size: ${sizeUsd.toFixed(2)} USDT | Trigger: ${leaderSymbol} (r=${target.correlation.toFixed(
           2
         )}) | TP: $${tp.toFixed(tp < 1 ? 5 : 2)} (+1.6%) | SL: $${sl.toFixed(sl < 1 ? 5 : 2)} (-1.0%) | Breakeven @ +0.7%`
       );
 
+      // Release inFlight lock after order is settled
+      setTimeout(() => {
+        inFlightOrdersRef.current.delete(targetSymbol);
+      }, 2000);
+
       // Real Binance Spot Order Execution when in LIVE mode
       if (tradingModeRef.current === 'LIVE' && liveTradingConfigRef.current.apiKey) {
         const orderQty = Math.min(sizeUsd, liveTradingConfigRef.current.maxOrderSizeUsd || 50);
         addLog(
           'TRADE',
-          `🔴 [BINANCE SPOT LIVE ORDER] Sending signed MARKET BUY for ${target.symbol} (${orderQty} USDT) to Binance ${liveTradingConfigRef.current.useTestnet ? 'Testnet' : 'Mainnet'}...`
+          `🔴 [BINANCE SPOT LIVE ORDER] Sending signed MARKET BUY for ${targetSymbol} (${orderQty} USDT) to Binance ${liveTradingConfigRef.current.useTestnet ? 'Testnet' : 'Mainnet'}...`
         );
         fetch('/api/binance/order', {
           method: 'POST',
@@ -617,7 +703,7 @@ export default function App() {
             apiKey: liveTradingConfigRef.current.apiKey,
             apiSecret: liveTradingConfigRef.current.apiSecret,
             testnet: liveTradingConfigRef.current.useTestnet,
-            symbol: target.symbol,
+            symbol: targetSymbol,
             side: 'BUY',
             quoteOrderQty: orderQty,
           }),
@@ -627,7 +713,7 @@ export default function App() {
             if (data.success) {
               addLog(
                 'SUCCESS',
-                `✅ [BINANCE LIVE ORDER FILLED] OrderId: ${data.orderId} | Status: ${data.status} | Executed: ${data.executedQty} ${target.symbol} | Cost: ${data.cummulativeQuoteQty} USDT`
+                `✅ [BINANCE LIVE ORDER FILLED] OrderId: ${data.orderId} | Status: ${data.status} | Executed: ${data.executedQty} ${targetSymbol} | Cost: ${data.cummulativeQuoteQty} USDT`
               );
             } else {
               addLog('ERROR', `❌ [BINANCE LIVE ORDER REJECTED] ${data.error}`);
@@ -671,6 +757,8 @@ export default function App() {
         const dataMap = new Map(data.map((item) => [item.symbol, item]));
         const pricesMap: Record<string, number> = {};
 
+        const leadersToTrigger: Array<{ symbol: string; change1m: number }> = [];
+
         setAssets((prev) => {
           const next = { ...prev };
 
@@ -701,9 +789,9 @@ export default function App() {
 
                 pricesMap[sym] = livePrice;
 
-                // Check if leader surged >= 1.5% in 1 minute on real Binance ticks
+                // Collect leader surge >= 1.5% in 1 minute on real Binance ticks
                 if (existing.isLeader && change1m >= 1.5) {
-                  triggerSniperTradeRef.current(sym, change1m);
+                  leadersToTrigger.push({ symbol: sym, change1m });
                 }
               }
             }
@@ -711,6 +799,11 @@ export default function App() {
 
           return next;
         });
+
+        // Trigger leader evaluations outside of the state updater
+        for (const leader of leadersToTrigger) {
+          triggerSniperTradeRef.current(leader.symbol, leader.change1m);
+        }
 
         evaluatePositionsRef.current(pricesMap);
         setIsLiveFeedConnected(true);
@@ -760,6 +853,22 @@ export default function App() {
             setLastTickTime(Date.now());
             setIsLiveFeedConnected(true);
 
+            // Check if leader surged >= 1.5% in 1 minute using stable ref
+            const existingAsset = assetsRef.current[symbol];
+            let isLeaderSurging = false;
+            let leaderSurgeAmount = 0;
+
+            if (existingAsset && existingAsset.isLeader) {
+              const oldPrice = existingAsset.price;
+              const history = [...existingAsset.priceHistory.slice(-25), closePrice];
+              const p1m = history[0] || oldPrice;
+              const change1m = ((closePrice - p1m) / p1m) * 100;
+              if (change1m >= 1.5) {
+                isLeaderSurging = true;
+                leaderSurgeAmount = change1m;
+              }
+            }
+
             setAssets((prev) => {
               const existing = prev[symbol];
               if (!existing) return prev;
@@ -778,13 +887,13 @@ export default function App() {
                 priceHistory: history,
               };
 
-              // Check if leader surged > 1.5% in 1 minute on real Binance ticks
-              if (existing.isLeader && change1m >= 1.5 && Math.random() < 0.2) {
-                triggerSniperTradeRef.current(symbol, change1m);
-              }
-
               return { ...prev, [symbol]: updated };
             });
+
+            // Trigger leader surge evaluation with full anti-duplicate debounce
+            if (isLeaderSurging) {
+              triggerSniperTradeRef.current(symbol, leaderSurgeAmount);
+            }
 
             // Evaluate positions
             evaluatePositionsRef.current({ [symbol]: closePrice });
@@ -882,6 +991,13 @@ export default function App() {
     addLog('WARN', '🔄 [CLEAN RESET] Purging all trading buffers, active positions, trades, cooldowns, and reports...');
 
     try {
+      // Clear all concurrency locks and tracking sets
+      inFlightOrdersRef.current.clear();
+      inFlightExitsRef.current.clear();
+      activePositionSymbolsRef.current.clear();
+      leaderSurgeLockRef.current = {};
+      lastGlobalTradeTimeRef.current = 0;
+
       hasLoggedInitialRest.current = false;
       setWalletBalance(10000.0);
       setPositions([]);
@@ -966,6 +1082,14 @@ export default function App() {
     const pos = positions.find((p) => p.symbol === symbol);
     if (!pos) return;
 
+    // Prevent duplicate exit trigger if already closing
+    if (inFlightExitsRef.current.has(pos.id)) return;
+    inFlightExitsRef.current.add(pos.id);
+
+    // Release symbol from active sets immediately
+    activePositionSymbolsRef.current.delete(symbol);
+    inFlightOrdersRef.current.delete(symbol);
+
     const exitPrice = pos.currentPrice;
     const exitVal = pos.coinsAmount * exitPrice;
     const pnlUsd = exitVal - pos.sizeUsd;
@@ -973,6 +1097,8 @@ export default function App() {
     const now = Date.now();
 
     setPositions((prev) => prev.filter((p) => p.symbol !== symbol));
+    positionsRef.current = positionsRef.current.filter((p) => p.symbol !== symbol);
+    walletBalanceRef.current += exitVal;
     setWalletBalance((prev) => prev + exitVal);
 
     // If live mode, submit real SELL to Binance
@@ -1024,7 +1150,9 @@ export default function App() {
     };
 
     setClosedTrades((prev) => [...prev, closedRecord]);
-    setCooldowns((prev) => ({ ...prev, [pos.symbol]: now + 15 * 60 * 1000 }));
+    const cdUntil = now + 15 * 60 * 1000;
+    cooldownsRef.current[pos.symbol] = cdUntil;
+    setCooldowns((prev) => ({ ...prev, [pos.symbol]: cdUntil }));
 
     addLog(
       'TRADE',
@@ -1037,6 +1165,17 @@ export default function App() {
   };
 
   const handleResetWallet = () => {
+    inFlightOrdersRef.current.clear();
+    inFlightExitsRef.current.clear();
+    activePositionSymbolsRef.current.clear();
+    leaderSurgeLockRef.current = {};
+    lastGlobalTradeTimeRef.current = 0;
+
+    positionsRef.current = [];
+    walletBalanceRef.current = 10000.0;
+    cooldownsRef.current = {};
+    closedTradesRef.current = [];
+
     setWalletBalance(10000.0);
     setPositions([]);
     setClosedTrades([]);

@@ -149,7 +149,10 @@ app.post('/api/binance/account', async (req, res) => {
   }
 });
 
-// 4. Place Real Spot Market Order
+// Recent order timestamps for anti-duplicate protection (5-second idempotency window)
+const recentOrderTimestamps = new Map<string, number>();
+
+// 4. Place Real Spot Market Order with Anti-Duplicate Idempotency Guard
 app.post('/api/binance/order', async (req, res) => {
   try {
     const { apiKey, apiSecret, testnet, symbol, side, quoteOrderQty, quantity } = req.body || {};
@@ -158,9 +161,27 @@ app.post('/api/binance/order', async (req, res) => {
       return res.status(400).json({ success: false, error: 'رمز العملة symbol ونوع الأمر side مطلوبان.' });
     }
 
+    const cleanSymbol = symbol.toUpperCase().trim();
+    const cleanSide = side.toUpperCase().trim();
+    const duplicateKey = `${cleanSymbol}_${cleanSide}`;
+    const now = Date.now();
+    const lastPlaced = recentOrderTimestamps.get(duplicateKey) || 0;
+
+    // Strict Anti-Duplicate Guard: reject if identical order was received within 5 seconds
+    if (now - lastPlaced < 5000) {
+      const remainingSec = ((5000 - (now - lastPlaced)) / 1000).toFixed(1);
+      return res.status(409).json({
+        success: false,
+        error: `[ANTI-DUPLICATE GUARD] تم منع تكرار الأمر لـ ${cleanSymbol} (${cleanSide}): تم إرسال أمر مماثل قبل قليل. يرجى الانتظار ${remainingSec} ثانية.`,
+        isDuplicate: true,
+      });
+    }
+
+    recentOrderTimestamps.set(duplicateKey, now);
+
     const orderParams: Record<string, string | number> = {
-      symbol: symbol.toUpperCase(),
-      side: side.toUpperCase(), // 'BUY' or 'SELL'
+      symbol: cleanSymbol,
+      side: cleanSide, // 'BUY' or 'SELL'
       type: 'MARKET',
     };
 
