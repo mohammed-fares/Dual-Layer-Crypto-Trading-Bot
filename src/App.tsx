@@ -8,6 +8,7 @@ import {
   HourlyTradingReport,
   TradingMode,
   LiveTradingConfig,
+  PriceAlert,
 } from './types';
 import { ContextGraphVisualizer } from './components/ContextGraphVisualizer';
 import { CorrelationMatrixView } from './components/CorrelationMatrixView';
@@ -17,6 +18,7 @@ import { TerminalView } from './components/TerminalView';
 import { PythonCodeViewer } from './components/PythonCodeViewer';
 import { AuditReportView } from './components/AuditReportView';
 import { LiveTradingConfigModal } from './components/LiveTradingConfigModal';
+import { PriceAlertModal } from './components/PriceAlertModal';
 import {
   getDeterministicCorrelationMatrix,
   loadSavedCorrelationMatrix,
@@ -44,6 +46,8 @@ import {
   SlidersHorizontal,
   Lock,
   Flame,
+  Bell,
+  BellRing,
 } from 'lucide-react';
 
 export default function App() {
@@ -176,6 +180,26 @@ export default function App() {
     return 3600;
   });
 
+  // 5. Price Notification Alerts State: Persistent across sessions
+  const [alerts, setAlerts] = useState<PriceAlert[]>(() => {
+    try {
+      const saved = localStorage.getItem('binance_bot_price_alerts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [selectedAlertAsset, setSelectedAlertAsset] = useState<CryptoAsset | null>(null);
+  const [activeAlertToast, setActiveAlertToast] = useState<{
+    symbol: string;
+    price: number;
+    targetPrice: number;
+    condition: 'ABOVE' | 'BELOW';
+    time: number;
+  } | null>(null);
+
   // Terminal Logs State: Persistent across page reloads on Kali Linux
   const [logs, setLogs] = useState<TerminalLog[]>(() => {
     try {
@@ -297,6 +321,19 @@ export default function App() {
     } catch {}
   }, [cooldowns]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('binance_bot_price_alerts', JSON.stringify(alerts));
+    } catch {}
+  }, [alerts]);
+
+  // Auto-dismiss alert toast
+  useEffect(() => {
+    if (!activeAlertToast) return;
+    const t = setTimeout(() => setActiveAlertToast(null), 8000);
+    return () => clearTimeout(t);
+  }, [activeAlertToast]);
+
   // Debounced Sync to backend file on Kali Linux host
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -359,6 +396,120 @@ export default function App() {
 
   const hasLoggedInitialRest = useRef(false);
   const hasLoggedWsConstrained = useRef(false);
+
+  // Price Alerts Evaluation Ref and Handlers
+  const evaluatePriceAlertsRef = useRef<(prices: Record<string, number>) => void>(() => {});
+
+  const evaluatePriceAlerts = useCallback(
+    (pricesMap: Record<string, number>) => {
+      setAlerts((prevAlerts) => {
+        let changed = false;
+        const nextAlerts = prevAlerts.map((alert) => {
+          if (alert.triggered) return alert;
+          const currentPrice = pricesMap[alert.symbol];
+          if (typeof currentPrice !== 'number' || currentPrice <= 0) return alert;
+
+          let triggered = false;
+          if (alert.condition === 'ABOVE' && currentPrice >= alert.targetPrice) {
+            triggered = true;
+          } else if (alert.condition === 'BELOW' && currentPrice <= alert.targetPrice) {
+            triggered = true;
+          }
+
+          if (triggered) {
+            changed = true;
+            // Desktop Browser Notification
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+              try {
+                new Notification(`🔔 تنبيه سعري: ${alert.symbol}!`, {
+                  body: `وصل السعر إلى $${currentPrice < 1 ? currentPrice.toFixed(5) : currentPrice.toFixed(2)} USDT (${alert.condition === 'ABOVE' ? 'ارتفع فوق' : 'انخفض تحت'} الهدف: $${alert.targetPrice})`,
+                  icon: '/favicon.ico',
+                });
+              } catch (err) {
+                console.error('Browser notification error', err);
+              }
+            }
+
+            addLog(
+              'WARN',
+              `🔔 [PRICE ALERT TRIGGERED] ${alert.symbol} reached $${currentPrice < 1 ? currentPrice.toFixed(5) : currentPrice.toFixed(2)} USDT (Target: $${alert.targetPrice} ${alert.condition})${alert.note ? ` - ${alert.note}` : ''}`
+            );
+
+            setActiveAlertToast({
+              symbol: alert.symbol,
+              price: currentPrice,
+              targetPrice: alert.targetPrice,
+              condition: alert.condition,
+              time: Date.now(),
+            });
+
+            return {
+              ...alert,
+              triggered: true,
+              triggeredAt: Date.now(),
+              triggeredPrice: currentPrice,
+            };
+          }
+          return alert;
+        });
+
+        if (changed) {
+          try {
+            localStorage.setItem('binance_bot_price_alerts', JSON.stringify(nextAlerts));
+          } catch {}
+          return nextAlerts;
+        }
+        return prevAlerts;
+      });
+    },
+    [addLog]
+  );
+
+  useEffect(() => {
+    evaluatePriceAlertsRef.current = evaluatePriceAlerts;
+  }, [evaluatePriceAlerts]);
+
+  const handleAddAlert = useCallback(
+    (newAlert: Omit<PriceAlert, 'id' | 'createdAt' | 'triggered'>) => {
+      const alertObj: PriceAlert = {
+        ...newAlert,
+        id: Math.random().toString(36).substring(2, 9),
+        createdAt: Date.now(),
+        triggered: false,
+      };
+      setAlerts((prev) => {
+        const next = [...prev, alertObj];
+        try {
+          localStorage.setItem('binance_bot_price_alerts', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      addLog('INFO', `🔔 [ALERT ARMED] Set alert for ${alertObj.symbol} @ $${alertObj.targetPrice} (${alertObj.condition})`);
+    },
+    [addLog]
+  );
+
+  const handleDeleteAlert = useCallback((id: string) => {
+    setAlerts((prev) => {
+      const next = prev.filter((a) => a.id !== id);
+      try {
+        localStorage.setItem('binance_bot_price_alerts', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleTestNotification = useCallback(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      try {
+        new Notification('🔔 [اختبار الإشعار] محرك التنبيهات يعمل بنجاح!', {
+          body: 'متصفحك جاهز لتلقي تنبيهات الأسعار الفورية عند وصول أي عملة للسعر المستهدف.',
+          icon: '/favicon.ico',
+        });
+      } catch {}
+      addLog('SUCCESS', '🔔 [NOTIFICATION TEST] Sent test desktop notification to browser.');
+    }
+  }, [addLog]);
 
   // Evaluate TP & SL on active positions with Anti-Duplicate Exit Protection
   const evaluatePositions = useCallback(
@@ -806,6 +957,7 @@ export default function App() {
         }
 
         evaluatePositionsRef.current(pricesMap);
+        evaluatePriceAlertsRef.current(pricesMap);
         setIsLiveFeedConnected(true);
         setLastTickTime(Date.now());
 
@@ -897,6 +1049,7 @@ export default function App() {
 
             // Evaluate positions
             evaluatePositionsRef.current({ [symbol]: closePrice });
+            evaluatePriceAlertsRef.current({ [symbol]: closePrice });
           }
         } catch {
           // ignore parsing error
@@ -1550,12 +1703,34 @@ export default function App() {
 
             {/* Quick 25 Tickers Grid */}
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl space-y-3">
-              <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
-                <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                  Target Universe (25 High-Liquidity Pairs)
-                </span>
-                <span className="text-slate-500 font-mono">Live WebSocket Feed (Binance Public)</span>
+              <div className="flex flex-wrap items-center justify-between text-xs border-b border-slate-800 pb-2 gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                    Target Universe (25 High-Liquidity Pairs)
+                  </span>
+                  {alerts.filter((a) => !a.triggered).length > 0 && (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[11px]">
+                      <BellRing className="w-3 h-3 animate-pulse" />
+                      {alerts.filter((a) => !a.triggered).length} Active Alert(s)
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const current = selectedAsset ? assets[selectedAsset] : Object.values(assets)[0];
+                      if (current) setSelectedAlertAsset(current);
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-300 rounded-md transition text-[11px] font-medium"
+                    title="فتح نافذة إدارة التنبيهات السعرية"
+                  >
+                    <Bell className="w-3.5 h-3.5 text-amber-400" />
+                    <span>إدارة التنبيهات</span>
+                  </button>
+                  <span className="text-slate-500 font-mono hidden sm:inline">Live WebSocket Feed (Binance Public)</span>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-5 gap-2">
@@ -1563,31 +1738,52 @@ export default function App() {
                   const isLeader = leaders.includes(asset.symbol);
                   const isSelected = selectedAsset === asset.symbol;
                   const isCooling = (cooldowns[asset.symbol] || 0) > Date.now();
+                  const assetAlerts = alerts.filter((a) => a.symbol === asset.symbol && !a.triggered);
+                  const hasActiveAlert = assetAlerts.length > 0;
 
                   return (
                     <div
                       key={asset.symbol}
                       onClick={() => setSelectedAsset(asset.symbol)}
-                      className={`p-2.5 rounded-lg border text-xs cursor-pointer transition flex flex-col justify-between ${
+                      className={`group relative p-2.5 rounded-lg border text-xs cursor-pointer transition flex flex-col justify-between ${
                         isSelected
                           ? 'bg-indigo-950/40 border-indigo-500/80 shadow-md'
                           : 'bg-slate-950/70 border-slate-800/80 hover:bg-slate-800/50'
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-slate-200">
-                          {asset.symbol.replace('USDT', '')}
-                        </span>
-                        {isLeader && (
-                          <span className="text-[9px] px-1 bg-indigo-500/20 text-indigo-300 rounded font-semibold">
-                            LEAD
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-bold text-slate-200">
+                            {asset.symbol.replace('USDT', '')}
                           </span>
-                        )}
-                        {isCooling && (
-                          <span className="text-[9px] px-1 bg-amber-500/20 text-amber-300 rounded font-mono">
-                            CD
-                          </span>
-                        )}
+                          {isLeader && (
+                            <span className="text-[9px] px-1 bg-indigo-500/20 text-indigo-300 rounded font-semibold">
+                              LEAD
+                            </span>
+                          )}
+                          {isCooling && (
+                            <span className="text-[9px] px-1 bg-amber-500/20 text-amber-300 rounded font-mono">
+                              CD
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Price Alert Bell Trigger */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedAlertAsset(asset);
+                          }}
+                          className={`p-1 rounded-md transition ${
+                            hasActiveAlert
+                              ? 'text-amber-400 bg-amber-500/20 hover:bg-amber-500/30'
+                              : 'text-slate-500 hover:text-amber-300 hover:bg-slate-800 opacity-70 group-hover:opacity-100'
+                          }`}
+                          title={`تفعيل أو مراجعة التنبيه السعري لـ ${asset.symbol}`}
+                        >
+                          <Bell className={`w-3.5 h-3.5 ${hasActiveAlert ? 'fill-amber-400 text-amber-400' : ''}`} />
+                        </button>
                       </div>
 
                       <div className="mt-2 flex items-baseline justify-between">
@@ -1635,6 +1831,7 @@ export default function App() {
             positions={positions}
             closedTrades={closedTrades}
             cooldowns={cooldowns}
+            hourlyReports={hourlyReports}
             onClosePositionManually={handleClosePositionManually}
             onResetWallet={handleResetWallet}
             onKillSwitch={handleKillSwitch}
@@ -1805,6 +2002,52 @@ export default function App() {
           <div>
             <div className="font-bold">تمت تهيئة وتطهير البوت بنجاح!</div>
             <div className="text-[11px] text-emerald-300/80">المحفظة أُعيدت إلى 10,000 USDT والبيانات مستوردة حياً من Binance.</div>
+          </div>
+        </div>
+      )}
+
+      {/* Price Alert Modal */}
+      {selectedAlertAsset && (
+        <PriceAlertModal
+          asset={selectedAlertAsset}
+          alerts={alerts}
+          onAddAlert={handleAddAlert}
+          onDeleteAlert={handleDeleteAlert}
+          onClose={() => setSelectedAlertAsset(null)}
+          onTestNotification={handleTestNotification}
+        />
+      )}
+
+      {/* Real-time Price Alert Banner Toast */}
+      {activeAlertToast && (
+        <div
+          className="fixed top-6 right-6 z-50 max-w-md bg-gradient-to-r from-amber-950/95 via-slate-900 to-slate-950 border-2 border-amber-500/80 text-white p-4 rounded-2xl shadow-2xl shadow-amber-950/60 flex items-start gap-3.5 backdrop-blur-md animate-bounce"
+          dir="rtl"
+        >
+          <div className="p-2.5 bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/40 animate-pulse">
+            <BellRing className="w-5 h-5" />
+          </div>
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-amber-300 text-sm">
+                تنبيه سعر مستهدف لـ {activeAlertToast.symbol}!
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveAlertToast(null)}
+                className="text-slate-400 hover:text-white text-xs px-1"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-200 leading-relaxed">
+              وصل السعر اللحظي إلى{' '}
+              <span className="font-mono font-bold text-amber-300">
+                ${activeAlertToast.price < 1 ? activeAlertToast.price.toFixed(5) : activeAlertToast.price.toFixed(2)}
+              </span>{' '}
+              USDT ({activeAlertToast.condition === 'ABOVE' ? 'تجاوز' : 'كسر'}{' '}
+              الهدف: <span className="font-mono font-bold text-white">${activeAlertToast.targetPrice}</span>)
+            </p>
           </div>
         </div>
       )}

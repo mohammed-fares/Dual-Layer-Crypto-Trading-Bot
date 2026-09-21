@@ -112,3 +112,15 @@ export interface LiveTradingConfig {
   lastConnectedAt?: number;
 }
 
+export interface PriceAlert {
+  id: string;
+  symbol: string;
+  targetPrice: number;
+  condition: 'ABOVE' | 'BELOW';
+  createdAt: number;
+  triggered: boolean;
+  triggeredAt?: number;
+  triggeredPrice?: number;
+  note?: string;
+}
+

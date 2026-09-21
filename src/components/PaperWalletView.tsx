@@ -1,5 +1,6 @@
 import React from 'react';
-import { Position, ClosedTrade, TradingMode, LiveTradingConfig } from '../types';
+import { Position, ClosedTrade, TradingMode, LiveTradingConfig, HourlyTradingReport } from '../types';
+import { EquityGrowthChart } from './EquityGrowthChart';
 import {
   Wallet,
   TrendingUp,
@@ -12,7 +13,14 @@ import {
   Settings,
   ShieldCheck,
   Zap,
-  PowerOff
+  PowerOff,
+  Coins,
+  Layers,
+  Lock,
+  Percent,
+  Sliders,
+  Activity,
+  BarChart3
 } from 'lucide-react';
 
 interface Props {
@@ -25,6 +33,7 @@ interface Props {
   positions: Position[];
   closedTrades: ClosedTrade[];
   cooldowns: Record<string, number>; // symbol -> expiry timestamp (ms)
+  hourlyReports?: HourlyTradingReport[];
   onClosePositionManually?: (symbol: string) => void;
   onResetWallet?: () => void;
   onKillSwitch?: () => void;
@@ -40,14 +49,24 @@ export const PaperWalletView: React.FC<Props> = ({
   positions,
   closedTrades,
   cooldowns,
+  hourlyReports = [],
   onClosePositionManually,
   onResetWallet,
   onKillSwitch,
 }) => {
   const isLive = mode === 'LIVE';
-  const effectiveBalance = isLive ? (liveConfig.liveUsdtBalance || balance) : balance;
-  const totalPnlUsd = effectiveBalance - initialBalance;
-  const totalPnlPct = initialBalance > 0 ? (totalPnlUsd / initialBalance) * 100 : 0;
+  const cashBalance = isLive ? (liveConfig.liveUsdtBalance || balance) : balance;
+
+  // Quantitative Portfolio & Risk Engine Calculations
+  const totalAllocatedMargin = positions.reduce((acc, p) => acc + p.sizeUsd, 0);
+  const totalPositionMarketValue = positions.reduce((acc, p) => acc + p.coinsAmount * p.currentPrice, 0);
+  const totalUnrealizedPnlUsd = totalPositionMarketValue - totalAllocatedMargin;
+  const totalNetEquity = cashBalance + totalPositionMarketValue;
+
+  const totalRealizedPnlUsd = closedTrades.reduce((acc, t) => acc + t.pnlUsd, 0);
+  const totalNetPnlUsd = totalNetEquity - initialBalance;
+  const totalNetPnlPct = initialBalance > 0 ? (totalNetPnlUsd / initialBalance) * 100 : 0;
+
   const wins = closedTrades.filter((t) => t.returnPct > 0).length;
   const winRate = closedTrades.length > 0 ? (wins / closedTrades.length) * 100 : 0;
 
@@ -55,7 +74,7 @@ export const PaperWalletView: React.FC<Props> = ({
   const activeCooldowns = Object.entries(cooldowns).filter(([_, expiry]) => expiry > now);
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-2xl flex flex-col gap-5">
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-2xl flex flex-col gap-6" id="paper-wallet-container">
       {/* Mode Switcher Banner */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
         <div className="flex items-center gap-2.5">
@@ -165,8 +184,8 @@ export const PaperWalletView: React.FC<Props> = ({
             </h2>
             <p className="text-xs text-slate-400">
               {isLive
-                ? `حجم الصفقة محدد بـ ${liveConfig.maxOrderSizeUsd} USDT مع جني أرباح +2.5% ووقف خسارة -1.2%.`
-                : 'يخصص 500 USDT (5% من المحفظة) لكل صفقة سنايبر. أهداف +2.5% ربح و -1.2% وقف خسارة و 15 دقيقة تهدئة.'}
+                ? `حجم الصفقة محدد بـ ${liveConfig.maxOrderSizeUsd} USDT مع جني أرباح +1.6% ووقف خسارة -1.0%.`
+                : 'تخصيص 500 USDT (5% من رأس المال) لكل صفقة سنايبر مع أهداف +1.6% جني أرباح و -1.0% وقف خسارة و 15 دقيقة تهدئة.'}
             </p>
           </div>
         </div>
@@ -174,58 +193,78 @@ export const PaperWalletView: React.FC<Props> = ({
         {!isLive && onResetWallet && (
           <button
             onClick={onResetWallet}
-            className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+            className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5"
           >
-            Reset Wallet (10,000 USDT)
+            <span>Reset Wallet (10,000 USDT)</span>
           </button>
         )}
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {/* Current Balance */}
+      {/* KPI Cards Ribbon (Accurately Audited Accounting) */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {/* Total Net Equity (NAV) */}
         <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3.5 flex flex-col justify-between">
-          <span className="text-xs text-slate-400 font-medium">
-            {isLive ? 'رصيد USDT الفعلي' : 'Current Balance'}
+          <span className="text-xs text-slate-400 font-medium flex items-center gap-1">
+            <Coins className="w-3.5 h-3.5 text-cyan-400" />
+            Total Net Equity (NAV)
           </span>
           <div className="mt-1">
             <span className="text-xl font-bold font-mono text-slate-100">
-              ${effectiveBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ${totalNetEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
             <span className="text-xs text-slate-500 ml-1">USDT</span>
           </div>
           <span className="text-[11px] text-slate-500 mt-1">
-            {isLive ? 'محدث مباشرة من Binance' : `Initial: $${initialBalance.toLocaleString()} USDT`}
+            كاش ({cashBalance.toFixed(0)}) + صفقات ({totalPositionMarketValue.toFixed(0)})
           </span>
         </div>
 
-        {/* Total Net PnL */}
+        {/* Liquid Cash Balance */}
         <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3.5 flex flex-col justify-between">
-          <span className="text-xs text-slate-400 font-medium">Net Realized PnL</span>
+          <span className="text-xs text-slate-400 font-medium">Available Cash (USDT)</span>
+          <div className="mt-1">
+            <span className="text-xl font-bold font-mono text-slate-200">
+              ${cashBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-xs text-slate-500 ml-1">USDT</span>
+          </div>
+          <span className="text-[11px] text-slate-500 mt-1">
+            {totalAllocatedMargin > 0 ? `$${totalAllocatedMargin.toFixed(0)} مستثمر في صفقات` : 'جاهز للاقتناص الفوري'}
+          </span>
+        </div>
+
+        {/* Total Net PnL (Realized + Unrealized) */}
+        <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3.5 flex flex-col justify-between">
+          <span className="text-xs text-slate-400 font-medium">Total Net PnL (ROI)</span>
           <div className="mt-1 flex items-center gap-1.5">
-            {totalPnlUsd >= 0 ? (
+            {totalNetPnlUsd >= 0 ? (
               <TrendingUp className="w-4 h-4 text-emerald-400" />
             ) : (
               <TrendingDown className="w-4 h-4 text-rose-400" />
             )}
             <span
               className={`text-xl font-bold font-mono ${
-                totalPnlUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                totalNetPnlUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'
               }`}
             >
-              {totalPnlUsd >= 0 ? '+' : ''}
-              {totalPnlUsd.toFixed(2)}
+              {totalNetPnlUsd >= 0 ? '+' : ''}
+              {totalNetPnlUsd.toFixed(2)}
             </span>
             <span className="text-xs text-slate-500">USDT</span>
           </div>
-          <span
-            className={`text-[11px] font-mono font-semibold ${
-              totalPnlPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
-            }`}
-          >
-            {totalPnlPct >= 0 ? '+' : ''}
-            {totalPnlPct.toFixed(2)}% ROI
-          </span>
+          <div className="flex items-center justify-between text-[11px] mt-1">
+            <span
+              className={`font-mono font-semibold ${
+                totalNetPnlPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}
+            >
+              {totalNetPnlPct >= 0 ? '+' : ''}
+              {totalNetPnlPct.toFixed(2)}% ROI
+            </span>
+            <span className="text-slate-500 text-[10px]">
+              محقق: ${totalRealizedPnlUsd.toFixed(1)}
+            </span>
+          </div>
         </div>
 
         {/* Win Rate */}
@@ -239,7 +278,7 @@ export const PaperWalletView: React.FC<Props> = ({
               ({wins}W - {closedTrades.length - wins}L)
             </span>
           </div>
-          <span className="text-[11px] text-slate-500 mt-1">{closedTrades.length} Trades Total</span>
+          <span className="text-[11px] text-slate-500 mt-1">{closedTrades.length} صفقات مغلقة</span>
         </div>
 
         {/* Active Positions */}
@@ -249,19 +288,68 @@ export const PaperWalletView: React.FC<Props> = ({
             <span className="text-xl font-bold font-mono text-amber-400">
               {positions.length}
             </span>
-            <span className="text-xs text-slate-500">/ 5 Max</span>
+            <span className="text-xs text-slate-500">/ 3 Max Concurrent</span>
           </div>
           <span className="text-[11px] text-slate-500 mt-1">
-            {activeCooldowns.length} in Cooldown (15m)
+            {activeCooldowns.length} عملات في فترة تهدئة (15m)
           </span>
+        </div>
+      </div>
+
+      {/* NEW D3 VISUALIZATION: Total Equity Growth Over Time */}
+      <EquityGrowthChart
+        reports={hourlyReports}
+        currentEquity={totalNetEquity}
+        initialBalance={initialBalance}
+      />
+
+      {/* Risk Engine & Parameter Audit Panel */}
+      <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
+          <span className="font-semibold text-slate-200 flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-indigo-400" />
+            معايير محرك إدارة المخاطر وتخصيص رأس المال (Risk Engine Audit &amp; Exposure Rules)
+          </span>
+          <span className="text-[11px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40 font-mono">
+            VERIFIED ACTIVE
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60">
+            <span className="text-slate-400 text-[11px] block">حد الصفقات المتزامنة (Max Concurrent):</span>
+            <span className="font-mono font-bold text-slate-100 text-sm">3 صفقات كحد أقصى</span>
+            <span className="text-slate-500 text-[10px] block mt-0.5">حد أقصى للتعرض 1,500 USDT (15%)</span>
+          </div>
+
+          <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60">
+            <span className="text-slate-400 text-[11px] block">حجم الصفقة الواحدة (Position Sizing):</span>
+            <span className="font-mono font-bold text-slate-100 text-sm">500 USDT (5% رأس المال)</span>
+            <span className="text-slate-500 text-[10px] block mt-0.5">تثبيت المخاطرة لكل صفقة سنايبر</span>
+          </div>
+
+          <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60">
+            <span className="text-slate-400 text-[11px] block">أهداف الربح ووقف الخسارة (TP &amp; SL):</span>
+            <span className="font-mono font-bold text-emerald-400 text-sm">TP: +1.6% | SL: -1.0%</span>
+            <span className="text-slate-500 text-[10px] block mt-0.5">نسبة المخاطرة إلى العائد 1.6 : 1.0</span>
+          </div>
+
+          <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60">
+            <span className="text-slate-400 text-[11px] block">فترة التهدئة الإلزامية (Cooldown):</span>
+            <span className="font-mono font-bold text-amber-300 text-sm">15 دقيقة (900 ثانية)</span>
+            <span className="text-slate-500 text-[10px] block mt-0.5">حماية من تقلبات السوق المتتالية</span>
+          </div>
         </div>
       </div>
 
       {/* Active Positions Table */}
       <div className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center justify-between">
-          <span>Active Open Sniper Positions ({positions.length})</span>
-          <span className="text-[11px] text-slate-500 lowercase">evaluated every live tick</span>
+          <span className="flex items-center gap-1.5">
+            <Activity className="w-4 h-4 text-cyan-400" />
+            Active Open Sniper Positions ({positions.length})
+          </span>
+          <span className="text-[11px] text-slate-500 lowercase">تقييم مستمر مع كل تكة سعرية مباشرة</span>
         </h3>
 
         {positions.length === 0 ? (
@@ -278,9 +366,9 @@ export const PaperWalletView: React.FC<Props> = ({
                   <th className="py-2.5 px-3">Entry Price</th>
                   <th className="py-2.5 px-3">Live Price</th>
                   <th className="py-2.5 px-3">Position Size</th>
-                  <th className="py-2.5 px-3">Target TP (+2.5%)</th>
-                  <th className="py-2.5 px-3">Stop Loss (-1.2%)</th>
-                  <th className="py-2.5 px-3">PnL</th>
+                  <th className="py-2.5 px-3">Target TP (+1.6%)</th>
+                  <th className="py-2.5 px-3">Stop Loss (-1.0%)</th>
+                  <th className="py-2.5 px-3">Unrealized PnL</th>
                   <th className="py-2.5 px-3">Trigger Leader</th>
                   <th className="py-2.5 px-3 text-right">Action</th>
                 </tr>
@@ -396,11 +484,11 @@ export const PaperWalletView: React.FC<Props> = ({
                         <td className="py-2 px-3 font-sans text-[11px]">
                           {trade.reason === 'TAKE_PROFIT' ? (
                             <span className="text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/50">
-                              TP (+2.5%)
+                              TP (+1.6%)
                             </span>
                           ) : trade.reason === 'STOP_LOSS' ? (
                             <span className="text-rose-400 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800/50">
-                              SL (-1.2%)
+                              SL (-1.0%)
                             </span>
                           ) : (
                             <span className="text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">
@@ -426,7 +514,7 @@ export const PaperWalletView: React.FC<Props> = ({
           <div className="flex items-center gap-2 text-slate-400">
             <Clock className="w-4 h-4 text-amber-400" />
             <span className="font-semibold text-slate-300">Active Post-Exit 15m Cooldowns:</span>
-            <span>(Prevents immediate re-entry churn on volatile assets)</span>
+            <span>(حماية صارمة من التكرار والارتدادات السريعة)</span>
           </div>
           <div className="flex flex-wrap gap-2 pt-1">
             {activeCooldowns.map(([sym, expiry]) => {
