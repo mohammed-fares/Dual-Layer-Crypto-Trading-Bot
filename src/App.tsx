@@ -114,128 +114,115 @@ export default function App() {
   const [showLiveConfigModal, setShowLiveConfigModal] = useState<boolean>(false);
   const [showLiveConfirmModal, setShowLiveConfirmModal] = useState<boolean>(false);
 
-  // Paper Trading State
-  const [walletBalance, setWalletBalance] = useState<number>(10000.0);
+  // Paper Trading State with persistent local storage
+  const [walletBalance, setWalletBalance] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('binance_bot_wallet_balance');
+      if (saved !== null) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val > 0) return val;
+      }
+    } catch {}
+    return 10000.0;
+  });
   const initialBalance = 10000.0;
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
-  const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
 
-  // 4. Hourly Trading Reports State
+  const [positions, setPositions] = useState<Position[]>(() => {
+    try {
+      const saved = localStorage.getItem('binance_bot_positions');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>(() => {
+    try {
+      const saved = localStorage.getItem('binance_bot_closed_trades');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  const [cooldowns, setCooldowns] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('binance_bot_cooldowns');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {};
+  });
+
+  // 4. Hourly Trading Reports State: Persistent, clean, starts from 0 on clean reset (zero old dummy reports)
   const [hourlyReports, setHourlyReports] = useState<HourlyTradingReport[]>(() => {
-    const now = Date.now();
-    const oneHour = 3600 * 1000;
+    try {
+      const saved = localStorage.getItem('binance_bot_reports');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  const [nextReportSeconds, setNextReportSeconds] = useState<number>(() => {
+    try {
+      const lastTs = localStorage.getItem('binance_bot_last_report_ts');
+      if (lastTs) {
+        const elapsed = Math.floor((Date.now() - parseInt(lastTs, 10)) / 1000);
+        if (elapsed >= 0 && elapsed < 3600) {
+          return 3600 - elapsed;
+        }
+      }
+    } catch {}
+    return 3600;
+  });
+
+  // Terminal Logs State: Persistent across page reloads on Kali Linux
+  const [logs, setLogs] = useState<TerminalLog[]>(() => {
+    try {
+      const saved = localStorage.getItem('binance_bot_logs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
     return [
       {
-        id: 'REP-20260920-001',
-        reportNumber: 1,
-        timestamp: now - oneHour * 2,
-        timeFormatted: new Date(now - oneHour * 2).toLocaleTimeString(),
-        periodStartFormatted: new Date(now - oneHour * 3).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        periodEndFormatted: new Date(now - oneHour * 2).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        initialBalance: 10000,
-        cashBalance: 9850.50,
-        totalEquity: 10142.20,
-        peakEquity: 10150.00,
-        drawdownPct: 0.08,
-        maxDrawdownPct: 0.45,
-        totalPnlUsd: 142.20,
-        totalPnlPct: 1.42,
-        hourPnlUsd: 142.20,
-        hourPnlPct: 1.42,
-        hourTradesCount: 4,
-        hourWinningTrades: 3,
-        hourLosingTrades: 1,
-        hourWinRatePct: 75.0,
-        cumulativeTradesCount: 4,
-        cumulativeWinRatePct: 75.0,
-        openPositionsCount: 1,
-        marketRegime: 'BULL_TREND',
-        marketBreadth: 0.65,
-        activeLeaders: ['BTCUSDT', 'ETHUSDT'],
-        openPositionsSnapshot: [],
-        closedTradesThisHour: [
-          {
-            id: 'TR-001',
-            symbol: 'SOLUSDT',
-            entryPrice: 178.40,
-            exitPrice: 181.20,
-            sizeUsd: 500,
-            returnPct: 1.57,
-            pnlUsd: 7.85,
-            exitTime: now - oneHour * 2 - 1200000,
-            reason: 'TAKE_PROFIT',
-            walletBalanceAfter: 10007.85,
-            triggerLeader: 'BTCUSDT',
-          },
-        ],
+        id: 'init-1',
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'INFO',
+        message: 'Dual-Layer Crypto Trading Bot active on Kali Linux. Continuous persistence armed.',
       },
       {
-        id: 'REP-20260920-002',
-        reportNumber: 2,
-        timestamp: now - oneHour,
-        timeFormatted: new Date(now - oneHour).toLocaleTimeString(),
-        periodStartFormatted: new Date(now - oneHour * 2).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        periodEndFormatted: new Date(now - oneHour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        initialBalance: 10000,
-        cashBalance: 9620.00,
-        totalEquity: 10298.50,
-        peakEquity: 10310.00,
-        drawdownPct: 0.11,
-        maxDrawdownPct: 0.52,
-        totalPnlUsd: 298.50,
-        totalPnlPct: 2.99,
-        hourPnlUsd: 156.30,
-        hourPnlPct: 1.54,
-        hourTradesCount: 5,
-        hourWinningTrades: 4,
-        hourLosingTrades: 1,
-        hourWinRatePct: 80.0,
-        cumulativeTradesCount: 9,
-        cumulativeWinRatePct: 77.8,
-        openPositionsCount: 2,
-        marketRegime: 'BULL_TREND',
-        marketBreadth: 0.72,
-        activeLeaders: ['BTCUSDT', 'SOLUSDT', 'NEARUSDT'],
-        openPositionsSnapshot: [],
-        closedTradesThisHour: [],
+        id: 'init-2',
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'BRAIN',
+        message: '[THE BRAIN] Swarm sub-agents loaded 25 target assets. Context Graph synchronized.',
+      },
+      {
+        id: 'init-3',
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'INFO',
+        message: '[THE EXECUTIONER] Continuous monitoring armed. Zero data loss on refresh.',
       },
     ];
   });
-  const [nextReportSeconds, setNextReportSeconds] = useState<number>(3600);
-
-  // 4. Terminal Logs
-  const [logs, setLogs] = useState<TerminalLog[]>([
-    {
-      id: 'init-1',
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'INFO',
-      message: 'Dual-Layer Crypto Trading Bot initialized on Kali Linux / Python 3 Asyncio runtime.',
-    },
-    {
-      id: 'init-2',
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'BRAIN',
-      message: '[THE BRAIN] Swarm sub-agents loaded 25 target assets. Initial Context Graph synthesized.',
-    },
-    {
-      id: 'init-3',
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'INFO',
-      message: '[THE EXECUTIONER] WebSocket listener armed. Target Universe: 25 High-Liquidity pairs.',
-    },
-  ]);
 
   const addLog = useCallback((type: TerminalLog['type'], message: string) => {
-    setLogs((prev) => [
-      ...prev.slice(-150),
-      {
-        id: Math.random().toString(36).substring(2, 9),
-        timestamp: new Date().toLocaleTimeString(),
-        type,
-        message,
-      },
-    ]);
+    setLogs((prev) => {
+      const nextLogs = [
+        ...prev.slice(-150),
+        {
+          id: Math.random().toString(36).substring(2, 9),
+          timestamp: new Date().toLocaleTimeString(),
+          type,
+          message,
+        },
+      ];
+      try {
+        localStorage.setItem('binance_bot_logs', JSON.stringify(nextLogs));
+      } catch {}
+      return nextLogs;
+    });
   }, []);
 
   // Update followers map from matrix & leaders
@@ -253,6 +240,81 @@ export default function App() {
     });
     setFollowersMap(fMap);
   }, [leaders, matrix]);
+
+  // Initial Sync from Backend State (e.g. data/bot_state.json on Kali Linux)
+  useEffect(() => {
+    fetch('/api/bot/state')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.exists && data.state) {
+          const s = data.state;
+          if (s.isPurged) {
+            // System was cleanly reset: keep clean slate
+            if (typeof s.walletBalance === 'number') setWalletBalance(s.walletBalance);
+            if (Array.isArray(s.positions)) setPositions(s.positions);
+            if (Array.isArray(s.closedTrades)) setClosedTrades(s.closedTrades);
+            if (Array.isArray(s.hourlyReports)) setHourlyReports(s.hourlyReports);
+            if (s.cooldowns) setCooldowns(s.cooldowns);
+          } else {
+            if (typeof s.walletBalance === 'number') setWalletBalance(s.walletBalance);
+            if (Array.isArray(s.positions) && s.positions.length > 0) setPositions(s.positions);
+            if (Array.isArray(s.closedTrades) && s.closedTrades.length > 0) setClosedTrades(s.closedTrades);
+            if (Array.isArray(s.hourlyReports) && s.hourlyReports.length > 0) setHourlyReports(s.hourlyReports);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Continuous LocalStorage and Disk Persistence Handlers
+  useEffect(() => {
+    try {
+      localStorage.setItem('binance_bot_wallet_balance', walletBalance.toString());
+    } catch {}
+  }, [walletBalance]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('binance_bot_positions', JSON.stringify(positions));
+    } catch {}
+  }, [positions]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('binance_bot_closed_trades', JSON.stringify(closedTrades));
+    } catch {}
+  }, [closedTrades]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('binance_bot_reports', JSON.stringify(hourlyReports));
+    } catch {}
+  }, [hourlyReports]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('binance_bot_cooldowns', JSON.stringify(cooldowns));
+    } catch {}
+  }, [cooldowns]);
+
+  // Debounced Sync to backend file on Kali Linux host
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetch('/api/bot/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          walletBalance,
+          positions,
+          closedTrades,
+          hourlyReports,
+          cooldowns,
+          tradingMode,
+        }),
+      }).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [walletBalance, positions, closedTrades, hourlyReports, cooldowns, tradingMode]);
 
   // Evaluate TP & SL on active positions
   const evaluatePositions = useCallback(
@@ -814,7 +876,7 @@ export default function App() {
     return () => clearInterval(swarmTimer);
   }, [addLog]);
 
-  // Clean Reset & Purge Action Handler
+  // Clean Reset & Purge Action Handler (Zero data loss, complete purge of old dummy data)
   const handleCleanResetAndPurge = async () => {
     setIsResetting(true);
     addLog('WARN', '🔄 [CLEAN RESET] Purging all trading buffers, active positions, trades, cooldowns, and reports...');
@@ -828,6 +890,45 @@ export default function App() {
       setHourlyReports([]);
       setNextReportSeconds(3600);
       setActiveSurgeLeader(null);
+
+      // Persist the clean slate to localStorage immediately so F5 never reloads old data
+      try {
+        localStorage.setItem('binance_bot_purged', 'true');
+        localStorage.setItem('binance_bot_wallet_balance', '10000');
+        localStorage.setItem('binance_bot_positions', JSON.stringify([]));
+        localStorage.setItem('binance_bot_closed_trades', JSON.stringify([]));
+        localStorage.setItem('binance_bot_cooldowns', JSON.stringify({}));
+        localStorage.setItem('binance_bot_reports', JSON.stringify([]));
+        localStorage.setItem('binance_bot_last_report_ts', Date.now().toString());
+      } catch {}
+
+      // Tell backend server to purge state file on Kali Linux host
+      fetch('/api/bot/reset', { method: 'POST' }).catch(() => {});
+
+      const cleanLogs: TerminalLog[] = [
+        {
+          id: Math.random().toString(36).substring(2, 9),
+          timestamp: new Date().toLocaleTimeString(),
+          type: 'INFO',
+          message: '🔄 [CLEAN RESET] Bot state completely purged to zero on Kali Linux. Continuous persistence active.',
+        },
+        {
+          id: Math.random().toString(36).substring(2, 9),
+          timestamp: new Date().toLocaleTimeString(),
+          type: 'BRAIN',
+          message: '🧠 [THE BRAIN] Correlation matrices and market buffers re-synchronized with live Binance data.',
+        },
+        {
+          id: Math.random().toString(36).substring(2, 9),
+          timestamp: new Date().toLocaleTimeString(),
+          type: 'SUCCESS',
+          message: '✅ [ENGINE READY] Fresh 10,000 USDT Virtual Balance armed. Live sniper cycle running.',
+        },
+      ];
+      setLogs(cleanLogs);
+      try {
+        localStorage.setItem('binance_bot_logs', JSON.stringify(cleanLogs));
+      } catch {}
 
       // Re-fetch fresh real Binance quotes immediately
       await fetchRealBinanceData();
@@ -940,6 +1041,17 @@ export default function App() {
     setPositions([]);
     setClosedTrades([]);
     setCooldowns({});
+    try {
+      localStorage.setItem('binance_bot_wallet_balance', '10000');
+      localStorage.setItem('binance_bot_positions', '[]');
+      localStorage.setItem('binance_bot_closed_trades', '[]');
+      localStorage.setItem('binance_bot_cooldowns', '{}');
+    } catch {}
+    fetch('/api/bot/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletBalance: 10000, positions: [], closedTrades: [], cooldowns: {} }),
+    }).catch(() => {});
     addLog('INFO', 'Virtual Paper Wallet reset to 10,000.00 USDT.');
   };
 
@@ -972,7 +1084,11 @@ export default function App() {
       const winRate =
         tradesThisHour.length > 0
           ? (wins / tradesThisHour.length) * 100
-          : prevReport?.cumulativeWinRatePct || 75.0;
+          : prevReport?.cumulativeWinRatePct || 0;
+
+      const allTradesCount = curClosed.length;
+      const allWins = curClosed.filter((t) => t.pnlUsd > 0).length;
+      const cumulativeWinRate = allTradesCount > 0 ? (allWins / allTradesCount) * 100 : 0;
 
       const newRep: HourlyTradingReport = {
         id: `REP-${new Date(now).toISOString().slice(0, 10).replace(/-/g, '')}-${nextNum.toString().padStart(3, '0')}`,
@@ -997,16 +1113,26 @@ export default function App() {
         hourWinningTrades: wins,
         hourLosingTrades: losses,
         hourWinRatePct: winRate,
-        cumulativeTradesCount: curClosed.length + 9,
-        cumulativeWinRatePct: 77.2,
+        cumulativeTradesCount: allTradesCount,
+        cumulativeWinRatePct: cumulativeWinRate,
         openPositionsCount: curPositions.length,
         marketRegime: 'BULL_TREND',
         marketBreadth: 0.68,
         activeLeaders: leaders.slice(0, 3),
         openPositionsSnapshot: [...curPositions],
-        closedTradesThisHour:
-          tradesThisHour.length > 0 ? [...tradesThisHour] : (prev[0]?.closedTradesThisHour || []),
+        closedTradesThisHour: [...tradesThisHour],
       };
+
+      // Save report directly to Kali Linux host filesystem in trading_reports/
+      fetch('/api/bot/save-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRep),
+      }).catch(() => {});
+
+      try {
+        localStorage.setItem('binance_bot_last_report_ts', now.toString());
+      } catch {}
 
       addLog(
         'SNIPER',
