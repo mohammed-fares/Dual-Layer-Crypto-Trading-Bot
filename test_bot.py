@@ -7,7 +7,11 @@ Tests mathematical models, health monitoring, risk rules, execution, and regress
 
 import asyncio
 import time
-import pytest
+import sys
+try:
+    import pytest
+except ImportError:
+    pytest = None
 import numpy as np
 import pandas as pd
 from crypto_dual_layer_bot import (
@@ -31,7 +35,9 @@ from crypto_dual_layer_bot import (
     BacktestEngine,
     HourlyReportManager,
     HourlyReportRecord,
-    MarketRegimeDetector
+    MarketRegimeDetector,
+    SniperExecutioner,
+    DualLayerCryptoBot
 )
 
 
@@ -326,4 +332,100 @@ def test_hourly_report_manager(tmp_path):
         assert "HOURLY TRADING REPORT #1" in text
         assert "PORTFOLIO & EQUITY OVERVIEW" in text
         assert "HOURLY PERIOD PERFORMANCE" in text
+
+
+def test_real_binance_rest_bootstrap():
+    """Verify that SniperExecutioner.bootstrap_real_binance_data retrieves 100% real live market prices."""
+    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    buf = TimestampedMarketBuffer(symbols)
+    health = DataHealthMonitor(symbols)
+    brain = ContextGraphEngine(symbols, buf)
+    wallet = PaperTradingEngine(10000.0)
+    journal = SignalJournal(buf)
+    executioner = SniperExecutioner(symbols, buf, health, brain, wallet, journal)
+
+    count = executioner.bootstrap_real_binance_data()
+    assert count > 0, "Failed to load real prices from Binance API"
+    for s in symbols:
+        if s in executioner.latest_prices:
+            p = executioner.latest_prices[s]
+            assert p > 0.0, f"Invalid real price for {s}: {p}"
+            # BTC should be reasonable real crypto price
+            if s == "BTCUSDT":
+                assert p > 10000.0
+
+
+def test_purge_all_state(tmp_path=None):
+    """Verify that DualLayerCryptoBot.purge_all_state wipes all residual memory and resets balance."""
+    import tempfile
+    from pathlib import Path
+    reports_dir = str(tmp_path / "purge_reports") if tmp_path else tempfile.mkdtemp()
+    bot = DualLayerCryptoBot(initial_balance=10000.0, reports_dir=reports_dir)
+
+    # Put dirty data into wallet and buffer
+    bot.buffer.record_tick("BTCUSDT", time.time(), 99999.0, 50000.0)
+    bot.wallet.cash_balance = 5432.10
+
+    # Purge
+    bot.purge_all_state(reset_balance=True, purge_reports=True)
+
+    # Verify clean state
+    assert bot.wallet.cash_balance == 10000.0
+    assert len(bot.wallet.open_positions) == 0
+    assert len(bot.wallet.closed_trades) == 0
+
+
+if __name__ == "__main__":
+    import tempfile
+    from pathlib import Path
+
+    print("\n" + "="*80)
+    print("      RUNNING BOT QUANTITATIVE AUDIT & REGRESSION TEST SUITE")
+    print("="*80)
+
+    unit_tests = [
+        test_strategy_config,
+        test_data_health_monitor,
+        test_timestamped_market_buffer,
+        test_context_graph_safe_diagonal,
+        test_warmup_fallback_no_peers_error,
+        test_lead_lag_cross_correlation,
+        test_risk_engine_constraints,
+        test_paper_trading_execution_and_fees,
+        test_portfolio_summary_keys,
+        test_backtest_simulation,
+        test_real_binance_rest_bootstrap,
+        test_purge_all_state,
+    ]
+
+    passed = 0
+    failed = 0
+
+    for test_fn in unit_tests:
+        name = test_fn.__name__
+        try:
+            test_fn()
+            print(f"  \033[92m[PASS]\033[0m {name}")
+            passed += 1
+        except Exception as e:
+            print(f"  \033[91m[FAIL]\033[0m {name}: {e}")
+            failed += 1
+
+    # Run hourly report test with temp directory
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            test_hourly_report_manager(Path(tmp_dir))
+            print("  \033[92m[PASS]\033[0m test_hourly_report_manager")
+            passed += 1
+        except Exception as e:
+            print(f"  \033[91m[FAIL]\033[0m test_hourly_report_manager: {e}")
+            failed += 1
+
+    print("="*80)
+    status_color = "\033[92m" if failed == 0 else "\033[91m"
+    print(f"RESULTS: {status_color}{passed} PASSED, {failed} FAILED ({passed/(passed+failed)*100:.1f}%)\033[0m")
+    print("="*80 + "\n")
+
+    if failed > 0:
+        sys.exit(1)
 

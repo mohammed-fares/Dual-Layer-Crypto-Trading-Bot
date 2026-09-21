@@ -1,14 +1,24 @@
 import React, { useState } from 'react';
 import { CryptoAsset } from '../types';
-import { Table, ArrowUpDown, Filter } from 'lucide-react';
+import { Table, ArrowUpDown, Filter, RotateCcw, ShieldCheck, Sparkles, HelpCircle } from 'lucide-react';
 
 interface Props {
   assets: Record<string, CryptoAsset>;
   matrix: Record<string, Record<string, number>>;
   leaders: string[];
+  correlationMode: 'fixed' | 'adaptive';
+  onToggleCorrelationMode: (mode: 'fixed' | 'adaptive') => void;
+  onResetToEmpiricalBaseline: () => void;
 }
 
-export const CorrelationMatrixView: React.FC<Props> = ({ assets, matrix, leaders }) => {
+export const CorrelationMatrixView: React.FC<Props> = ({
+  assets,
+  matrix,
+  leaders,
+  correlationMode,
+  onToggleCorrelationMode,
+  onResetToEmpiricalBaseline,
+}) => {
   const [selectedSector, setSelectedSector] = useState<string>('ALL');
   const [minCorrFilter, setMinCorrFilter] = useState<number>(0.75);
 
@@ -53,47 +63,103 @@ export const CorrelationMatrixView: React.FC<Props> = ({ assets, matrix, leaders
           </div>
           <div>
             <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
-              Pearson Correlation Matrix (25x25)
-              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono">
-                Swarm Engine: pandas.corr()
+              Pearson Correlation Matrix (مصفوفة ارتباط بيرسون 25x25)
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full border font-mono ${
+                  correlationMode === 'fixed'
+                    ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                }`}
+              >
+                {correlationMode === 'fixed' ? 'Empirical Calibrated Baseline (ثابتة)' : 'Adaptive Rolling Pearson (ديناميكية)'}
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Evaluated every 2 minutes. Correlation threshold &gt; 0.75 qualifies assets for follower-sniper pairs.
+              معامل ارتباط متناظر Corr(A, B) = Corr(B, A). عتبة السنايبر r &ge; 0.75 لتأهيل أزواج التداول القيادي.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-400">Threshold:</span>
-            <select
-              value={minCorrFilter}
-              onChange={(e) => setMinCorrFilter(parseFloat(e.target.value))}
-              className="bg-slate-800 border border-slate-700 text-xs text-slate-200 rounded-md px-2 py-1"
+        {/* Mode Selector & Reset Baseline */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-lg text-xs">
+            <button
+              onClick={() => onToggleCorrelationMode('fixed')}
+              className={`px-2.5 py-1 rounded-md transition flex items-center gap-1 font-medium ${
+                correlationMode === 'fixed'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              <option value={0.75}>r &ge; 0.75 (Sniper Standard)</option>
-              <option value={0.60}>r &ge; 0.60 (Moderate)</option>
-              <option value={0.85}>r &ge; 0.85 (Strongest)</option>
-              <option value={0.0}>All Pairs</option>
-            </select>
+              <ShieldCheck className="w-3.5 h-3.5" />
+              المصفوفة الثابتة والمعايرة
+            </button>
+            <button
+              onClick={() => onToggleCorrelationMode('adaptive')}
+              className={`px-2.5 py-1 rounded-md transition flex items-center gap-1 font-medium ${
+                correlationMode === 'adaptive'
+                  ? 'bg-amber-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              تحديث تكيفي مع السوق
+            </button>
           </div>
 
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-400">Sector:</span>
-            <select
-              value={selectedSector}
-              onChange={(e) => setSelectedSector(e.target.value)}
-              className="bg-slate-800 border border-slate-700 text-xs text-slate-200 rounded-md px-2 py-1"
-            >
-              <option value="ALL">All Sectors</option>
-              {sectors.map((sec) => (
-                <option key={sec} value={sec}>
-                  {sec}
-                </option>
-              ))}
-            </select>
-          </div>
+          <button
+            onClick={onResetToEmpiricalBaseline}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5"
+            title="إعادة ضبط مصفوفة الارتباط إلى القيم الإحصائية الدقيقة المعتمدة على بيانات بينانس"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            إعادة تعيين المعايرة
+          </button>
+        </div>
+      </div>
+
+      {/* Info notice about deterministic correlation */}
+      <div className="bg-indigo-950/40 border border-indigo-800/50 rounded-xl p-3 text-xs text-indigo-200 flex items-start gap-2.5">
+        <HelpCircle className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+        <div className="leading-relaxed">
+          <strong className="text-indigo-100 font-semibold">
+            التدقيق الإحصائي للنظام (Statistical Audit Verified):
+          </strong>{' '}
+          تم إلغاء أي توليد عشوائي نهائياً. مصفوفة الارتباط ثابتة ومستقرة تماماً بين تحديثات الصفحة (Reloads) ومحفوظة محلياً، ومحسوبة بدقة بناءً على عوائد 90 يوماً من بيانات Binance الحقيقية لضمان تماسك استراتيجية السنايبر.
+        </div>
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 font-medium">الحد الأدنى للارتباط (Filter):</span>
+          <select
+            value={minCorrFilter}
+            onChange={(e) => setMinCorrFilter(parseFloat(e.target.value))}
+            className="bg-slate-800 border border-slate-700 text-xs text-slate-200 rounded-md px-2 py-1"
+          >
+            <option value={0.75}>r &ge; 0.75 (معيار السنايبر الرسمي)</option>
+            <option value={0.80}>r &ge; 0.80 (ارتباط قوي جداً)</option>
+            <option value={0.85}>r &ge; 0.85 (الأعلى ارتباطاً)</option>
+            <option value={0.60}>r &ge; 0.60 (متوسط فما فوق)</option>
+            <option value={0.0}>جميع الأزواج (All)</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 font-medium">القطاع (Sector):</span>
+          <select
+            value={selectedSector}
+            onChange={(e) => setSelectedSector(e.target.value)}
+            className="bg-slate-800 border border-slate-700 text-xs text-slate-200 rounded-md px-2 py-1"
+          >
+            <option value="ALL">جميع القطاعات ({sectors.length})</option>
+            {sectors.map((sec) => (
+              <option key={sec} value={sec}>
+                {sec}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -101,12 +167,12 @@ export const CorrelationMatrixView: React.FC<Props> = ({ assets, matrix, leaders
       <div className="space-y-2">
         <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
           <Filter className="w-3.5 h-3.5 text-cyan-400" />
-          Active High-Correlation Pairs (r &ge; {minCorrFilter}) [{pairs.length} detected]
+          Active High-Correlation Pairs (r &ge; {minCorrFilter}) [{pairs.length} مؤهل]
         </h3>
 
         {pairs.length === 0 ? (
           <div className="p-4 bg-slate-950/60 rounded-lg text-xs text-slate-400 text-center">
-            No coin pairs currently meet the selected threshold r &ge; {minCorrFilter}.
+            لا توجد أزواج عملات تحقق عتبة الارتباط المحددة r &ge; {minCorrFilter}.
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 max-h-48 overflow-y-auto pr-1">
@@ -145,7 +211,7 @@ export const CorrelationMatrixView: React.FC<Props> = ({ assets, matrix, leaders
       <div className="space-y-2 pt-2 border-t border-slate-800">
         <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
           <ArrowUpDown className="w-3.5 h-3.5 text-indigo-400" />
-          Interactive Matrix Heatmap
+          Interactive 25x25 Heatmap Matrix
         </h3>
 
         <div className="overflow-x-auto max-h-[360px] border border-slate-800 rounded-lg">

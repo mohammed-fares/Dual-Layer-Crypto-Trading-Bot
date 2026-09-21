@@ -98,3 +98,17 @@ export interface HourlyTradingReport {
   isSessionFinal?: boolean;
 }
 
+export type TradingMode = 'PAPER' | 'LIVE';
+
+export interface LiveTradingConfig {
+  apiKey: string;
+  apiSecret: string;
+  useTestnet: boolean;
+  maxOrderSizeUsd: number;
+  dailyStopLossPct: number;
+  isConnected: boolean;
+  canTrade: boolean;
+  liveUsdtBalance: number;
+  lastConnectedAt?: number;
+}
+
